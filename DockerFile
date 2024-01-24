@@ -12,6 +12,13 @@ RUN apt-get update && apt-get install -y curl jq \
     && filename=$(curl -s https://api.github.com/repos/kettingpowered/kettinglauncher/releases/latest | jq -r '.assets[] | select(.name | contains("sources.jar") | not) | .browser_download_url') \
     && echo "Downloading ${filename}" \
     && curl -L ${filename} -o launcher.jar \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    #Account Setup
+    && echo "pyuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/java_user \
+    && chmod 0440 /etc/sudoers.d/java_user \
+    && chown -R java_user:java_user /app \
+    && chmod -R u+rwx /app
+
+USER java_user
 
 ENTRYPOINT ["java", "-jar", "/app/launcher.jar"]
