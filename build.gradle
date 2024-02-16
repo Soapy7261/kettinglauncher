@@ -6,6 +6,7 @@ plugins {
 }
 
 import net.minecraftforge.gradleutils.PomUtils
+import org.kettingpowered.task.GenerateLibs
 import org.kettingpowered.task.Util
 
 import java.util.stream.Collectors
@@ -19,7 +20,7 @@ repositories {
     mavenCentral()
     maven { url = 'https://nexus.c0d3m4513r.com/repository/Ketting/' }
     maven { url = 'https://nexus.c0d3m4513r.com/repository/Forge/' }
-    mavenLocal()
+//    mavenLocal()
 }
 
 java {
@@ -31,22 +32,18 @@ configurations {
     implementation {
         canBeResolved = true
     }
-    transitive {
-        extendsFrom(implementation)
-    }
-    includeInJar
 }
 
 dependencies {
     compileOnly 'org.jetbrains:annotations:24.0.0'
-    implementation 'org.kettingpowered:kettingcommon:2.2.0'
+    implementation 'org.kettingpowered:kettingcommon:2.3.2'
     implementation 'com.google.code.gson:gson:2.10.1' //Used in Patcher
     implementation 'me.tongfei:progressbar:0.10.0' //Used to display progress
-    transitive 'org.jline:jline-reader:3.21.0' //needed for progressbar
-    transitive 'org.jline:jline-terminal:3.21.0' //needed for progressbar
-
-    //Include gson in the jar
-    includeInJar 'com.google.code.gson:gson:2.10.1'
+    implementation 'org.kettingpowered:terminal-colors:1.0.2' //Used for progress bar, and terminal colors
+    implementation 'org.apache.logging.log4j:log4j-api:2.19.0'
+    implementation 'org.apache.logging.log4j:log4j-core:2.19.0'
+    implementation 'org.apache.logging.log4j:log4j-slf4j-impl:2.19.0'
+    implementation 'com.google.code.gson:gson:2.10.1'
 
     //Used in Processors
     implementation 'net.minecraftforge:binarypatcher:1.2.0:fatjar'
@@ -60,24 +57,13 @@ ext{
     mainClass = 'org.kettingpowered.launcher.Main'
 }
 
-tasks.register('generateKettingLauncherLibraries', org.kettingpowered.task.GenerateLibs) {
-    configuration = 'transitive'
-}
-
-tasks.register('generateJarIncludes', Copy) {
-    from configurations.includeInJar.collect { zipTree(it) }
-    into project.buildDir.path + '/includeInJar'
-    exclude 'META-INF/**'
+tasks.register('generateKettingLauncherLibraries', GenerateLibs) {
+    configuration = 'implementation'
 }
 
 jar{
     dependsOn generateKettingLauncherLibraries
     mustRunAfter generateKettingLauncherLibraries
-
-    dependsOn generateJarIncludes
-    mustRunAfter generateJarIncludes
-
-    from project.buildDir.path + '/includeInJar'
 
     from(generateKettingLauncherLibraries.output) {
         rename {
@@ -87,6 +73,7 @@ jar{
     manifest{
         attributes 'Main-Class': mainClass
         attributes 'Launcher-Agent-Class': mainClass
+        attributes 'Automatic-Module-Name': 'org.kettingpowered.kettinglauncher'
         attributes([
         "Specification-Title": "Kettingpowered",
         "Specification-Vendor": "Kettingpowered",

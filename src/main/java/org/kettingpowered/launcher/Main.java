@@ -1,8 +1,15 @@
 package org.kettingpowered.launcher;
 
 import org.kettingpowered.ketting.internal.KettingConstants;
+import org.kettingpowered.ketting.internal.KettingFileVersioned;
+import org.kettingpowered.ketting.internal.KettingFiles;
+import org.kettingpowered.ketting.internal.hacks.JavaHacks;
+import org.kettingpowered.ketting.internal.hacks.ServerInitHelper;
 import org.kettingpowered.launcher.dependency.*;
 import org.kettingpowered.launcher.lang.I18n;
+import org.kettingpowered.launcher.log.LogLevel;
+import org.kettingpowered.launcher.log.Logger;
+import org.kettingpowered.launcher.log.impl.Log4jImpl;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -15,11 +22,10 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
 import java.util.jar.JarFile;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * @author C0D3 M4513R
@@ -34,10 +40,12 @@ public class Main {
     //This will only pull the INSTALLER_LIBRARIES_FOLDER from the compileTime KettingConstants version.
     public static final String INSTALLER_LIBRARIES_FOLDER = KettingConstants.INSTALLER_LIBRARIES_FOLDER;
     public static final MavenArtifact KETTINGCOMMON = new MavenArtifact(KettingConstants.KETTING_GROUP, "kettingcommon", "1.0.0", Optional.empty(), Optional.of("jar"));
-    static Instrumentation INST; 
+    static Instrumentation INST;
+    static Libraries libs = new Libraries();
 
+    @SuppressWarnings("unused")
     public static void agentmain(String agentArgs, Instrumentation inst) throws Exception {
-        if (DEBUG) System.out.println("[Agent] premain lib load start");
+        Logger.log(LogLevel.DEBUG, "[Agent] premain lib load start");
 
         //Load language files
         I18n.load();
@@ -63,7 +71,7 @@ public class Main {
                     .invoke(null, dependencyList, inst);
         }
 
-        if (DEBUG) System.out.println("[Agent] premain lib load end");
+        Logger.log(LogLevel.DEBUG, "[Agent] premain lib load end");
     }
     
     @SuppressWarnings("unused")
@@ -99,7 +107,7 @@ public class Main {
         //Damn classloaders
         I18n.load(true);
 
-        final Libraries libs = new Libraries();
+        Libraries libs = new Libraries();
         List<Dependency<MavenArtifact>> deps = dependencyList.stream()
                 .map(obj->{
                     try{
@@ -156,10 +164,140 @@ public class Main {
         );
     }
 
-    public static void main(String[] args) throws Exception {
-        final KettingLauncher launcher = new KettingLauncher(args);
+    public static void main(String[] args) throws Throwable {
+        Logger.setImpl(new Log4jImpl());
+
+        //these are used later in the patcher, to prevent us from loading excessive classes (which will fuck module definition/loading)
+        try (BufferedReader stream = new BufferedReader(new InputStreamReader(Objects.requireNonNull(Main.class.getClassLoader().getResourceAsStream("data/launcher_libraries.txt"))))){
+            libs.downloadExternal(
+                    stream.lines()
+                    .map(Dependency::parse)
+                    .filter(Optional::isPresent)
+                    .map(Optional::get)
+                    .toList(),
+                    true
+            );
+        }
+        libs.addLoadedLib(Main.LauncherJar.toURI().toURL());
+
+        KettingLauncher launcher = new KettingLauncher(args);
         launcher.init();
         launcher.prepareLaunch();
-        launcher.launch();
+        String launchClass = launcher.findLaunchClass();
+
+        List<String>[] defaultArgs = getDefaultArgs(launcher.args, launcher.libs, launchClass);
+
+
+        try {
+            if (launchClass.contains("cpw.mods.bootstraplauncher.BootstrapLauncher")) {
+                ServerInitHelper.init(defaultArgs[0], KettingFiles.LIBRARIES_PATH, KettingLauncher.MANUALLY_PATCHED_LIBS);
+            }
+            
+            //it is important to do this after the ServerInitHelper.init,
+            // because this will mark other packages as loaded by this module (which will fuck with declaring/loading modules) 
+            JavaHacks.loadExternalFileSystems(KettingLauncher.class.getClassLoader()); 
+            List<String> launchArgs = new ArrayList<>(defaultArgs[1]);
+            launchArgs.addAll(launcher.args.args());
+
+            I18n.log("info.launcher.launching");
+
+            Class.forName(launchClass, true, Main.class.getClassLoader())
+                    .getDeclaredMethod("main", String[].class)
+                    .invoke(null, (Object) launchArgs.toArray(String[]::new));
+        } catch (Throwable e) {
+            throw new RuntimeException(I18n.get("error.launcher.launch_failure"), e);
+        }
+    }
+    private static Stream<String> getClassPath(Libraries libraries){
+        return Arrays.stream(libraries.getLoadedLibs())
+        .map(url -> {
+            try {
+                return url.toURI();
+            } catch (URISyntaxException e) {
+                return null;
+            }
+        }).filter(Objects::nonNull)
+        .map(dep->KettingFiles.MAIN_FOLDER_FILE.toPath().relativize(new File(dep).toPath()).toString())
+        .map(str->str.replace(File.separatorChar, '/'))//thanks windows
+        .filter(str -> !str.isBlank());
+    }
+    private static List<String>[] getDefaultArgs(ParsedArgs args, Libraries libraries , String main) throws IOException {
+        switch (main) {
+            case "cpw.mods.bootstraplauncher.BootstrapLauncher":
+                //noinspection unchecked
+                return new List[] {
+                    Arrays.asList(
+                            "-p " + Arrays.stream(libraries.getLoadedLibs())
+                                    .filter(url -> 
+                                            url.toString().contains("org/ow2/asm") || 
+                                            url.toString().contains("cpw/mods/securejarhandler")
+                                    ).map(url-> {
+                                        try {
+                                            return url.toURI();
+                                        } catch (URISyntaxException e) {
+                                            return null;
+                                        }
+                                    }).filter(Objects::nonNull)
+                                    .map(dep->KettingFiles.MAIN_FOLDER_FILE.toPath().relativize(new File(dep).toPath()).toString())
+                                    .map(str->str.replace(File.separatorChar, '/'))//thanks windows
+                                    .collect(Collectors.joining(File.pathSeparator)),
+                            "--add-modules ALL-MODULE-PATH",
+                            "--add-opens java.base/java.util.jar=cpw.mods.securejarhandler",
+                            "--add-opens java.base/java.lang.invoke=cpw.mods.securejarhandler",
+                            "--add-exports java.base/sun.security.util=cpw.mods.securejarhandler",
+                            "--add-exports jdk.naming.dns/com.sun.jndi.dns=java.naming",
+                            "-DlegacyClassPath="+
+                            //these paths below would cause a duplicate 
+                            getClassPath(libraries).filter(entry->
+                                    !entry.contains("org/kettingpowered/server/fmlcore")&&
+                                    !entry.contains("org/kettingpowered/server/mclanguage")&&
+                                    !entry.contains("org/kettingpowered/server/lowcodelanguage")&&
+                                    !entry.contains("org/kettingpowered/server/javafmllanguage")&&
+                                    !entry.contains("org/kettingpowered/server/forge")
+                                ).collect(Collectors.joining(File.pathSeparator)),
+                            "-DlibraryDirectory="+KettingConstants.INSTALLER_LIBRARIES_FOLDER,
+                            "-Djava.net.preferIPv6Addresses=system"
+                        ),
+                        Arrays.asList(
+                                "--launchTarget",
+                                args.launchTarget()!=null? args.launchTarget() : "forgeserver",
+                                "--fml.forgeVersion",
+                                KettingConstants.FORGE_VERSION+"-"+KettingConstants.KETTING_VERSION,
+                                "--fml.mcVersion",
+                                KettingConstants.MINECRAFT_VERSION,
+                                "--fml.forgeGroup",
+                                "org.kettingpowered.server",
+                                "--fml.mcpVersion",
+                                KettingConstants.MCP_VERSION
+                        )
+                };
+            case  "net.minecraftforge.bootstrap.ForgeBootstrap":
+            default:
+                addLoadedLib(libraries, KettingFileVersioned.MCLANGUAGE);
+                addLoadedLib(libraries, KettingFileVersioned.LOWCODELANGUAGE);
+                addLoadedLib(libraries, KettingFileVersioned.JAVAFMLLANGUAGE);
+                addLoadedLib(libraries, KettingFileVersioned.FMLCORE);
+                addLoadedLib(libraries, KettingFileVersioned.FMLLOADER);
+                addLoadedLib(libraries, KettingFileVersioned.FORGE_UNIVERSAL_JAR);
+                addLoadedLib(libraries, KettingFileVersioned.FORGE_PATCHED_JAR);
+                
+                String classpath = getClassPath(libraries).collect(Collectors.joining(File.pathSeparator));
+                System.setProperty("java.class.path", classpath);
+                //noinspection unchecked
+                return new List[]{
+                        List.of(
+                                "-cp",
+                                classpath
+                        ),
+                        List.of(
+                                "--launchTarget",
+                                args.launchTarget() != null ? args.launchTarget() : "forge_server"
+                        )
+                };
+        }
+    }
+    private static void addLoadedLib(Libraries libraries, File file) throws IOException {
+        Main.INST.appendToSystemClassLoaderSearch(new JarFile(file));
+        libraries.addLoadedLib(file);
     }
 }

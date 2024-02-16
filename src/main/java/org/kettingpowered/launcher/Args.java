@@ -4,13 +4,14 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.kettingpowered.ketting.internal.KettingConstants;
 import org.kettingpowered.launcher.betterui.BetterUI;
+import org.kettingpowered.launcher.log.LogLevel;
+import org.kettingpowered.launcher.log.Logger;
 
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Objects;
 
 /**
  * @author C0D3 M4513R
@@ -43,11 +44,16 @@ public class Args {
         boolean daus = containsArg("-daus");
         boolean enableServerUpdate = !(dau||daus);
         boolean enableLauncherUpdate = !containsArg("-daul") && !"dev-env".equals(KettingLauncher.Version);
-        @NotNull String target = Objects.requireNonNullElse(getArg("--launchTarget"), "forge_server");
+        @Nullable String target = getArg("--launchTarget");
         @Nullable String minecraftVersion = getArg("-minecraftVersion");
+        @Nullable String forgeVersion = getArg("-forgeVersion");
+        @Nullable String kettingVersion = getArg("-kettingVersion");
         //backward compatibility
-        if (minecraftVersion == null) minecraftVersion = getArg("-minecraftVersion");
-        return new ParsedArgs(Collections.unmodifiableList(args), installOnly, enableServerUpdate, enableLauncherUpdate, target, minecraftVersion);
+        if (minecraftVersion == null) {
+            minecraftVersion = getArg("-minecraftVersion");
+            if (minecraftVersion != null) Logger.log(LogLevel.WARN, "warn.discontinued.double_dash_minecraftVersion");
+        }
+        return new ParsedArgs(Collections.unmodifiableList(args), installOnly, enableServerUpdate, enableLauncherUpdate, target, minecraftVersion, forgeVersion, kettingVersion);
     }
     
     private static void printHelp(){
@@ -64,6 +70,8 @@ public class Args {
         System.out.println("  -installOnly        Stop the launcher, after the server has been installed.");
         System.out.println("  -minecraftVersion   Sets the Minecraft Version of the Server. Will update the server to this version, if a Ketting version on another Minecraft Version is used.");
         System.out.println("  --minecraftVersion  See above, except it's depracticed. Swap to the one above, for the exact same effect.");
+        System.out.println("  -forgeVersion       Sets the Forge Version of the Server. Will update the server to this version, if a Ketting version on another Forge or Minecraft Version is used.");
+        System.out.println("  -kettingVersion     Sets the Ketting Version of the Server. Will update the server to this version, if a Ketting version on another Ketting or Minecraft Version is used.");
         System.out.println("Development|Unstable Options:");
         System.out.println("  --launchTarget      Sets the default launchTarget. Exists mostly for debug purposes for forge. We reserve the right to ignore this (e.g. if it's unsupported by the target server version )");
     }

@@ -11,22 +11,14 @@ import org.kettingpowered.ketting.internal.KettingConstants;
 import org.kettingpowered.ketting.internal.KettingFileVersioned;
 import org.kettingpowered.ketting.internal.KettingFiles;
 import org.kettingpowered.launcher.betterui.BetterUI;
-import org.kettingpowered.launcher.dependency.Dependency;
-import org.kettingpowered.launcher.dependency.Maven;
-import org.kettingpowered.launcher.dependency.MavenArtifact;
+import org.kettingpowered.launcher.dependency.*;
 import org.kettingpowered.launcher.internal.utils.HashUtils;
 import org.kettingpowered.launcher.internal.utils.NetworkUtils;
 import org.kettingpowered.launcher.lang.I18n;
 import org.kettingpowered.launcher.utils.Processors;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.FileReader;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.PrintStream;
+import java.io.*;
+import java.lang.reflect.InvocationTargetException;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
 
@@ -37,8 +29,10 @@ public class Patcher {
 
     private final PrintStream out = System.out;
     private PrintStream log;
+    Libraries libraries;
 
-    public Patcher() throws IOException, NoSuchAlgorithmException {
+    public Patcher(Libraries libraries) throws IOException, NoSuchAlgorithmException, ClassNotFoundException, NoSuchMethodException {
+        this.libraries = libraries;
         downloadServer();
         readInstallScript();
         prepareTokens();
@@ -125,7 +119,11 @@ public class Patcher {
         tokens.put("{BINPATCH}", KettingFiles.SERVER_LZMA.getAbsolutePath());
     }
 
-    private void readAndExecuteProcessors() throws IOException, NoSuchAlgorithmException {
+    private void readAndExecuteProcessors() throws IOException, NoSuchAlgorithmException, ClassNotFoundException, NoSuchMethodException {
+        //we wrap this, for a similar reason as in KettingLauncher#findMainClass:
+        //if we didn't, stuff that would get loaded into the system classloader by this would get flagged as being part of our module, when it shouldn't be. 
+        AgentClassLoader cl = new AgentClassLoader(libraries.getLoadedLibs());
+
         final File logFile = KettingFiles.PATCHER_LOGS;
         if (!logFile.exists()) {
             try {
@@ -177,14 +175,19 @@ public class Patcher {
                     parsedArgs.add(argString);
                 });
 
+                //We also set the ContextClassLoader here, just in case a Processor does something stupid.
+                ClassLoader ocl = Thread.currentThread().getContextClassLoader();
                 try {
+                    Thread.currentThread().setContextClassLoader(cl);
                     mute();
-                    Processors.execute(jar, parsedArgs.toArray(String[]::new));
+                    Processors.execute(cl,  jar, parsedArgs.toArray(String[]::new));
                     unmute();
                     progressBar.step();
-                } catch (IOException e) {
+                } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
                     unmute();
                     throw new RuntimeException(I18n.get("error.patcher.processor_fault"), e);
+                } finally{
+                    Thread.currentThread().setContextClassLoader(ocl);
                 }
             });
         }
@@ -205,8 +208,8 @@ public class Patcher {
     public static boolean checkUpdateNeeded(String mcVersion, String forgeVersion, String kettingVersion, boolean updating) {
         if (!KettingFiles.STORED_HASHES.exists()) return true;
         try (BufferedReader reader = new BufferedReader(new FileReader(KettingFiles.STORED_HASHES))){
-            return !reader.lines()
-                    .allMatch(string -> {
+            return reader.lines()
+                    .anyMatch(string -> {
                         String[] args = string.split("=");
                         String value = args[1].trim();
                         try {
@@ -214,7 +217,7 @@ public class Patcher {
                                 case "installJson" ->
                                         checkUpdateNeededInstallerJson(mcVersion, forgeVersion, kettingVersion, value, updating);
                                 case "serverLzma" ->
-                                        value.equals(HashUtils.getHash(KettingFiles.SERVER_LZMA, "SHA3-512"));
+                                        !value.equals(HashUtils.getHash(KettingFiles.SERVER_LZMA, "SHA3-512"));
                                 case "server" -> checkUpdateNeededServer(mcVersion, value);
                                 default -> false;
                             };
@@ -229,7 +232,12 @@ public class Patcher {
     public static boolean checkUpdateNeededServer(String mcVersion, String hash) throws Exception {
         final File NMSDir = new File(KettingFiles.NMS_BASE_DIR, mcVersion);
         final File SERVER_JAR = new File(NMSDir, "server-" + mcVersion + ".jar");
-        return hash.equals(HashUtils.getHash(SERVER_JAR, "SHA3-512"));
+        boolean upToDate = hash.equals(HashUtils.getHash(SERVER_JAR, "SHA3-512"));
+
+        if (upToDate) I18n.logDebug("debug.patcher.upToDate.server");
+        else I18n.logDebug("debug.patcher.notUpToDate.server");
+
+        return !upToDate;
     }
     public static boolean checkUpdateNeededInstallerJson(String mcVersion, String forgeVersion, String kettingVersion, String hash, boolean updating) throws Exception {
         final String mcForgeKettingVersion = mcVersion+"-"+forgeVersion+"-"+kettingVersion;
@@ -245,7 +253,12 @@ public class Patcher {
         }
         final File forgeServerDir = new File(KettingFiles.KETTINGSERVER_FORGE_DIR, mcForgeKettingVersion);
         final File installJson = new File(forgeServerDir, "forge-" + mcForgeKettingVersion + "-installscript.json");
-        return hash.equals(HashUtils.getHash(installJson,"SHA3-512"));
+        boolean upToDate = hash.equals(HashUtils.getHash(installJson,"SHA3-512"));
+
+        if (upToDate) I18n.logDebug("debug.patcher.upToDate.installerJson");
+        else I18n.logDebug("debug.patcher.notUpToDate.installerJson");
+
+        return !upToDate;
     }
 
 

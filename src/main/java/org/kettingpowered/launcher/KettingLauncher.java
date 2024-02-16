@@ -4,16 +4,17 @@ import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.kettingpowered.ketting.internal.*;
+import org.kettingpowered.ketting.internal.hacks.JavaHacks;
 import org.kettingpowered.launcher.betterui.BetterUI;
 import org.kettingpowered.launcher.dependency.*;
 import org.kettingpowered.launcher.info.MCVersion;
 import org.kettingpowered.launcher.internal.utils.HashUtils;
 import org.kettingpowered.launcher.lang.I18n;
+import org.kettingpowered.launcher.log.LogLevel;
+import org.kettingpowered.launcher.log.Logger;
 import org.kettingpowered.launcher.utils.FileUtils;
-import org.kettingpowered.ketting.internal.hacks.JavaHacks;
 
 import java.io.*;
-import java.net.MalformedURLException;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Path;
@@ -62,7 +63,7 @@ public class KettingLauncher {
         Bundled_ForgeVersion = Bundled_ForgeVersion1;
         Bundled_McVersion = Bundled_McVersion1;
         Bundled = Bundled1;
-        if (Main.DEBUG && Bundled) I18n.log("debug.bundled.extra", Bundled_McVersion, Bundled_ForgeVersion, Bundled_KettingVersion);
+        if (Bundled) I18n.logDebug("debug.bundled.extra", Bundled_McVersion, Bundled_ForgeVersion, Bundled_KettingVersion);
     }
 
     public static final String ArtifactID = "kettinglauncher";
@@ -81,9 +82,9 @@ public class KettingLauncher {
     
 
     private final Path eula = new File(KettingFiles.MAIN_FOLDER_FILE, "eula.txt").toPath();
-    private final ParsedArgs args;
+    final ParsedArgs args;
     private final BetterUI ui;
-    private final Libraries libs = new Libraries();
+    final Libraries libs = new Libraries();
 
     private final List<String> serverVersions = new ArrayList<>();
     private final List<String> availableMcVersions = new ArrayList<>();
@@ -99,7 +100,7 @@ public class KettingLauncher {
      */
     public void init() throws Exception {
         final String mc_version;
-        if (Main.DEBUG && Bundled) I18n.log("debug.bundled");
+        if (Bundled) I18n.logDebug("debug.bundled");
 
         //Cache ketting versions
         final List<String> depVersions = new MavenManifest(KettingConstants.KETTINGSERVER_GROUP, Main.FORGE_SERVER_ARTIFACT_ID).getDepVersions();
@@ -139,7 +140,7 @@ public class KettingLauncher {
             final String fileName = prefix+"-"+version + ".jar";
             final File file = new File(KettingFiles.KETTINGSERVER_BASE_DIR, String.format("%s/%s/%s", prefix, version, fileName));
             try {
-                extractJarContent(KettingFiles.DATA_DIR+fileName, file, true);
+                extractJarContent(KettingFiles.DATA_DIR+fileName, file);
             } catch (IOException e) {
                 failed=true;
                 exception.addSuppressed(e);
@@ -154,7 +155,7 @@ public class KettingLauncher {
             exception.addSuppressed(e);
         }
         try{
-            extractJarContent(KettingFiles.DATA_DIR+fileName+"-universal.jar", new File(folder, fileName+"-universal.jar"), true);
+            extractJarContent(KettingFiles.DATA_DIR+fileName+"-universal.jar", new File(folder, fileName+"-universal.jar"));
         } catch (IOException e) {
             failed=true;
             exception.addSuppressed(e);
@@ -175,9 +176,6 @@ public class KettingLauncher {
     }
 
     public static void extractJarContent(@NotNull String from, @NotNull File to) throws IOException {
-        extractJarContent(from, to, false);
-    }
-    public static void extractJarContent(@NotNull String from, @NotNull File to, boolean add_to_cp) throws IOException {
         try (InputStream internalFile = KettingLauncher.class.getClassLoader().getResourceAsStream(from)) {
             if (internalFile == null)
                 throw new IOException(I18n.get("error.launcher.bundled_file_not_found", from));
@@ -196,7 +194,6 @@ public class KettingLauncher {
         } catch (NoSuchAlgorithmException e) {
             throw new IOException(I18n.get("error.launcher.hash_algorithm_not_found"), e);
         }
-        if (add_to_cp) Main.INST.appendToSystemClassLoaderSearch(new JarFile(to));
     }
 
     private void updateLauncher() throws Exception {
@@ -208,7 +205,7 @@ public class KettingLauncher {
                 .map(mmp->mmp.convertMMP(Integer::parseInt))
                 .sorted()
                 .toList();
-        if(Main.DEBUG) System.out.println(launcherVersions.stream().map(MajorMinorPatchVersion::toString).collect(Collectors.joining("\n")));
+        Logger.log(LogLevel.DEBUG, launcherVersions.stream().map(MajorMinorPatchVersion::toString).collect(Collectors.joining("\n")));
         MajorMinorPatchVersion<Integer> version = MajorMinorPatchVersion.parse(Version).convertMMP(Integer::parseInt);
         final int index = launcherVersions.indexOf(version);
         if (index<0) I18n.logError("error.launcher.unrecognized_version");
@@ -230,7 +227,7 @@ public class KettingLauncher {
                 .forEach(FileUtils::deleteDir);
     }
     
-    private void ensureOneServerAndUpdate(final String mc_version) throws Exception {
+    private void ensureOneServerAndUpdate(final String mc_version) {
         //Parse the given minecraft version 
         final MajorMinorPatchVersion<Integer> mc_mmp;
         {
@@ -243,12 +240,14 @@ public class KettingLauncher {
         {
             File[] kettingServerVersions = Objects.requireNonNullElse(KettingFiles.KETTINGSERVER_FORGE_DIR.listFiles(File::isDirectory), new File[0]);
     
-            if (Main.DEBUG) {
-                System.out.println(KettingFiles.KETTINGSERVER_FORGE_DIR.getAbsolutePath());
-                System.out.println(Arrays.stream(kettingServerVersions).map(File::getName).collect(Collectors.joining("\n")));
-            }
-            final List<Tuple<MajorMinorPatchVersion<Integer>, MajorMinorPatchVersion<Integer>>> versions = MajorMinorPatchVersion.parseKettingServerVersionList(Arrays.stream(kettingServerVersions).map(File::getName)).getOrDefault(mc_mmp, new ArrayList<>());
-            
+            Logger.log(LogLevel.DEBUG, KettingFiles.KETTINGSERVER_FORGE_DIR.getAbsolutePath());
+            Logger.log(LogLevel.DEBUG, Arrays.stream(kettingServerVersions).map(File::getName).collect(Collectors.joining("\n")));
+            final List<Tuple<MajorMinorPatchVersion<Integer>, MajorMinorPatchVersion<Integer>>> versions =
+                    filterKettingVersions(
+                        MajorMinorPatchVersion.parseKettingServerVersionList(Arrays.stream(kettingServerVersions)
+                                .map(File::getName))
+                                .getOrDefault(mc_mmp, new ArrayList<>())
+                    );
             needsDownload = versions.isEmpty();
             if(needsDownload) FileUtils.deleteDir(KettingFiles.KETTINGSERVER_FORGE_DIR); //we have multiple ketting versions, but 0 that match the requested minecraft version.
             else if(versions.size() > 1) {
@@ -265,11 +264,20 @@ public class KettingLauncher {
         if (needsDownload) I18n.log("info.launcher.server_download", mc_version);
         // get the newest version
         if (args.enableServerUpdator() || needsDownload) {
-            final List<Tuple<MajorMinorPatchVersion<Integer>, MajorMinorPatchVersion<Integer>>> parsedServerVersions = MajorMinorPatchVersion.parseKettingServerVersionList(serverVersions.stream()).getOrDefault(mc_mmp, new ArrayList<>());
-            if (Main.DEBUG) {
-                I18n.log("debug.launcher.available_server_versions");
-                System.out.println(String.join("\n", serverVersions));
-            }
+            final List<Tuple<MajorMinorPatchVersion<Integer>, MajorMinorPatchVersion<Integer>>> parsedServerVersions = 
+                    filterKettingVersions(
+                        MajorMinorPatchVersion.parseKettingServerVersionList(serverVersions.stream())
+                                .getOrDefault(mc_mmp, new ArrayList<>())
+                    );
+
+            I18n.logDebug("debug.launcher.available_server_versions");
+            Logger.log(
+                    LogLevel.DEBUG,
+                    parsedServerVersions.stream()
+                        .map(tuple -> String.format("Minecraft: %s, Forge: %s, Ketting: %s", mc_mmp, tuple.t1(), tuple.t2()))
+                        .collect(Collectors.joining("\n"))
+            );
+
             if (parsedServerVersions.isEmpty()) {
                 I18n.logError("error.launcher.no_server_version", mc_version);
                 System.exit(1);
@@ -277,7 +285,7 @@ public class KettingLauncher {
             serverVersion = parsedServerVersions.get(0);
         }
         if (Patcher.checkUpdateNeeded(mc_mmp.toString(), serverVersion.t1().toString(), serverVersion.t2().toString(), args.enableServerUpdator() || needsDownload)){
-            if (Main.DEBUG) I18n.log("debug.patcher.update");
+            I18n.logDebug("debug.patcher.update");
             //prematurely delete files to prevent errors
             FileUtils.deleteDir(KettingFiles.NMS_BASE_DIR);
             FileUtils.deleteDir(KettingFiles.KETTINGSERVER_BASE_DIR);
@@ -319,6 +327,23 @@ public class KettingLauncher {
             }
         }
     }
+    
+    List<Tuple<MajorMinorPatchVersion<Integer>, MajorMinorPatchVersion<Integer>>> filterKettingVersions(List<Tuple<MajorMinorPatchVersion<Integer>, MajorMinorPatchVersion<Integer>>> versions) {
+        @Nullable MajorMinorPatchVersion<Integer> kettingVersion = Optional.ofNullable(args.kettingVersion())
+                .map(MajorMinorPatchVersion::parse)
+                .map(item -> item.convertMMP(Integer::parseInt))
+                .orElse(null);
+        @Nullable MajorMinorPatchVersion<Integer> forgeVersion = Optional.ofNullable(args.forgeVersion())
+                .map(MajorMinorPatchVersion::parse)
+                .map(item -> item.convertMMP(Integer::parseInt))
+                .orElse(null);
+        return versions.stream().filter(version -> {
+            if (kettingVersion != null && !kettingVersion.equals(version.t2()) ) return false;
+            //noinspection RedundantIfStatement
+            if (forgeVersion != null && !forgeVersion.equals(version.t1()) ) return false;
+            return true;
+        }).toList();
+    }
 
     void prepareLaunch() throws Exception {
         Thread downloadMCP = new Thread(()-> {
@@ -332,7 +357,6 @@ public class KettingLauncher {
         downloadMCP.setName("Download-MCP");
         downloadMCP.start();
         {
-            StringBuilder builder = new StringBuilder();
             try (BufferedReader stream = new BufferedReader(new FileReader(KettingFileVersioned.FORGE_KETTING_LIBS))) {
                 libs.downloadExternal(
                         stream.lines()
@@ -340,60 +364,57 @@ public class KettingLauncher {
                                 .filter(Optional::isPresent)
                                 .map(Optional::get)
                                 .filter(dep-> MANUALLY_PATCHED_LIBS.stream().noneMatch(path -> dep.getPath().startsWith(path)))
-                                .peek(dep-> builder.append(File.pathSeparator).append(Maven.getDependencyPath(dep.getPath()).toAbsolutePath()))
                                 .toList(), 
                         true
                 );
             }
             
-            builder.append(File.pathSeparator).append(KettingFileVersioned.FORGE_UNIVERSAL_JAR.getAbsolutePath());
-            MavenArtifact universalJarArtifact = new MavenArtifact(KettingConstants.KETTINGSERVER_GROUP, Main.FORGE_SERVER_ARTIFACT_ID, KettingConstants.MINECRAFT_VERSION+"-"+KettingConstants.FORGE_VERSION+"-"+KettingConstants.KETTING_VERSION, Optional.of("universal"), Optional.of("jar"));
-            libs.addLoadedLib(Maven.getDependencyPath(universalJarArtifact.getPath()));
-            libs.addLoadedLib(KettingFileVersioned.FORGE_PATCHED_JAR);
-            libs.addLoadedLib(KettingFileVersioned.SERVER_JAR);
-            
-            System.setProperty("java.class.path", builder.toString());
             System.setProperty("ketting.remapper.dump", "./.mixin.out/plugin_classes");
-            addToClassPath(KettingFileVersioned.FORGE_PATCHED_JAR);
-            addToClassPath(KettingFileVersioned.SERVER_JAR);
         }
         downloadMCP.join();
         if (Patcher.checkUpdateNeeded(KettingConstants.MINECRAFT_VERSION, KettingConstants.FORGE_VERSION, KettingConstants.KETTING_VERSION, false))
-            new Patcher();
+            new Patcher(Main.libs);
 
         JavaHacks.clearReservedIdentifiers();
         Arrays.stream(libs.getLoadedLibs())
-                .map(url-> {
-                    try {
-                        return new JarFile(new File(url.toURI()));
-                    } catch (IOException | URISyntaxException e) {
-                        throw new RuntimeException(e);
-                    }
-                }).forEach(jarFile -> Main.INST.appendToSystemClassLoaderSearch(jarFile));
-        JavaHacks.loadExternalFileSystems(KettingLauncher.class.getClassLoader());
+                .forEach(url -> {
+                        try {
+                            Main.INST.appendToSystemClassLoaderSearch(new JarFile(new File(url.toURI())));
+                        } catch (URISyntaxException | IOException e) {
+                            throw new RuntimeException(e);
+                        }
+                });
         
         if (args.installOnly()) {
             I18n.log("info.launcher.install_only.success");
             System.exit(0);
         }
     }
-    void launch() throws Exception {
-        I18n.log("info.launcher.launching");
-        final List<String> arg_list = new ArrayList<>(args.args());
-        arg_list.add("--launchTarget");
-        arg_list.add(args.launchTarget());
 
-        Class.forName("net.minecraftforge.bootstrap.ForgeBootstrap", true, KettingLauncher.class.getClassLoader())
-                .getMethod("main", String[].class)
-                .invoke(null, (Object) arg_list.toArray(String[]::new));
-    }
-
-    private void addToClassPath(File file) {
+    String findLaunchClass() throws ClassNotFoundException {
+        ClassNotFoundException exception = new ClassNotFoundException(I18n.get("error.launcher.no_launch_class"));
+        //the AgentClassLoader is used here, because it doesn't propagate to anywhere else.
+        //if we were, we would get errors, that some package is already defined, because we loaded it here.
+        ClassLoader cl = new AgentClassLoader(libs.getLoadedLibs());
+        
         try {
-            libs.addLoadedLib(file);//Yes, this is important, and fixes an issue with forge not finding language jars
-        } catch (MalformedURLException e) {
-            throw new RuntimeException(e);
+            Class.forName("net.minecraftforge.bootstrap.ForgeBootstrap", true, cl);
+            return "net.minecraftforge.bootstrap.ForgeBootstrap";
+        }catch(Throwable t){
+            exception.addSuppressed(t);
         }
-        System.setProperty("java.class.path", System.getProperty("java.class.path") + File.pathSeparator + file.getAbsolutePath());
+        
+        MajorMinorPatchVersion<Integer> mc = MajorMinorPatchVersion.parse(KettingConstants.MINECRAFT_VERSION).convertMMP(Integer::parseInt);
+        
+        if (mc.compareTo(new MajorMinorPatchVersion<>(1,20,2, null)) <=0 ){
+            try {
+                Class.forName("cpw.mods.bootstraplauncher.BootstrapLauncher", true, cl);
+                return "cpw.mods.bootstraplauncher.BootstrapLauncher";
+            }catch(Throwable t){
+                exception.addSuppressed(t);
+            }
+        }
+
+        throw exception;
     }
 }

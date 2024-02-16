@@ -1,23 +1,21 @@
 package org.kettingpowered.launcher.lang;
 
-import com.google.gson.JsonElement;
-import com.google.gson.JsonParser;
 import org.jetbrains.annotations.NotNull;
 import org.kettingpowered.launcher.Main;
+import org.kettingpowered.launcher.log.LogLevel;
+import org.kettingpowered.launcher.log.Logger;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.util.HashMap;
 import java.util.Locale;
-import java.util.Map;
+import java.util.Properties;
 
 public class I18n {
 
     private static final String LANG_PATH = "lang/";
 
-    private static final Map<String, String> translations = new HashMap<>();
-    private static final Map<String, String> fallback = new HashMap<>();
+    private static final Properties translations = new Properties();
+    private static final Properties fallback = new Properties();
 
     private static Locale current;
 
@@ -39,43 +37,41 @@ public class I18n {
             loadFile("en_us", fallback, silent);
 
         if (!silent)
-            System.out.println("Loaded " + translations.size() + " translations");
+            Logger.log("Loaded %s translations", translations.size());
     }
 
-    private static void loadFile(String langCode, Map<String, String> toAdd, boolean silent) {
+    private static void loadFile(String langCode, Properties toAdd, boolean silent) {
         silent = silent && !Main.DEBUG;
-        try (InputStream lang = I18n.class.getClassLoader().getResourceAsStream(LANG_PATH + langCode + ".json")) {
+        try (InputStream lang = I18n.class.getClassLoader().getResourceAsStream(LANG_PATH + langCode + ".properties")) {
             if (lang == null) {
-                if (!silent) System.out.println("Language file not found for " + langCode + ", using default");
+                if (!silent) Logger.log(LogLevel.WARN, "Language file not found for %s, using default", langCode);
                 return;
             }
 
-            final JsonElement json = JsonParser.parseReader(new InputStreamReader(lang));
-            json.getAsJsonObject().entrySet().forEach(entry -> toAdd.put(entry.getKey(), entry.getValue().getAsString()));
+            toAdd.load(lang);
         } catch (IOException io) {
             if (silent) return;
-            System.err.println("Failed to load language file for " + langCode);
-            io.printStackTrace();
+            Logger.log("Failed to load language file for " + langCode, io);
         }
     }
 
     public static String get(@NotNull String key) {
-        String translation = translations.get(key);
+        Object translation = translations.get(key);
         if (translation == null) {
             if (fallback.isEmpty()) {
-                System.err.println("Missing translation for " + key);
+                Logger.log(LogLevel.ERROR, "Missing translation for " + key);
                 return key;
             }
 
             translation = fallback.get(key);
             if (translation == null) {
-                System.err.println("Missing translation for " + key);
+                Logger.log(LogLevel.ERROR, "Missing translation for " + key);
                 return key;
             }
 
-            return translation;
+            return translation.toString();
         }
-        return translation;
+        return translation.toString();
     }
 
     public static String get(@NotNull String key, Object... args) {
@@ -83,18 +79,26 @@ public class I18n {
     }
 
     public static void log(@NotNull String key) {
-        System.out.println(get(key));
+        Logger.log(get(key));
     }
 
     public static void log(@NotNull String key, Object... args) {
-        System.out.println(get(key, args));
+        Logger.log(get(key, args));
     }
 
     public static void logError(@NotNull String key) {
-        System.err.println(get(key));
+        Logger.log(LogLevel.ERROR, get(key));
     }
 
     public static void logError(@NotNull String key, Object... args) {
-        System.err.println(get(key, args));
+        Logger.log(LogLevel.ERROR, get(key, args));
+    }
+
+    public static void logDebug(@NotNull String key) {
+        Logger.log(LogLevel.DEBUG, get(key));
+    }
+
+    public static void logDebug(@NotNull String key, Object... args) {
+        Logger.log(LogLevel.DEBUG, get(key, args));
     }
 }
